@@ -19,7 +19,7 @@ const ADMIN_NAV_SECTIONS = [
   {
     title: 'Operations',
     items: [
-      { path: '/admin/orders', label: 'Orders', icon: 'bi-bag-fill' },
+      { path: '/admin/orders', label: 'Place Order (POS)', icon: 'bi-cart-check-fill' },
       { path: '/admin/menu', label: 'Menu Management', icon: 'bi-journal-richtext' },
     ],
   },
@@ -43,9 +43,9 @@ const CUSTOMER_NAV_SECTIONS = [
   {
     title: 'Customer Portal',
     items: [
-      { path: '/customer/dashboard', label: 'Home', icon: 'bi-house-fill' },
-      { path: '/customer/menu', label: 'Menu', icon: 'bi-journal-richtext' },
-      { path: '/customer/cart', label: 'Cart', icon: 'bi-cart-fill' },
+      { path: '/customer/dashboard', label: 'Home & Overview', icon: 'bi-house-fill' },
+      { path: '/customer/menu', label: 'Explore Menu', icon: 'bi-journal-richtext' },
+      { path: '/customer/cart', label: 'Place Order / Cart', icon: 'bi-cart-fill' },
       { path: '/customer/orders', label: 'My Orders', icon: 'bi-clock-history' },
       { path: '/customer/reviews', label: 'Reviews', icon: 'bi-star-fill' },
       { path: '/customer/profile', label: 'Profile', icon: 'bi-person-circle' },

@@ -103,16 +103,39 @@ export default function Navbar({ collapsed, onToggle, theme, onThemeToggle }) {
 
       {/* Right — Actions */}
       <div className="navbar-right">
+        {/* Quick Place Order Button */}
+        {user?.role === 'customer' ? (
+          <Link
+            to="/customer/cart"
+            className="btn btn-primary btn-sm"
+            style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', borderRadius: '16px', textDecoration: 'none' }}
+            title="View Cart & Place Order"
+          >
+            <i className="bi bi-cart-fill"></i>
+            <span>Place Order / Cart</span>
+          </Link>
+        ) : (
+          <Link
+            to="/admin/orders"
+            className="btn btn-primary btn-sm"
+            style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', borderRadius: '16px', textDecoration: 'none' }}
+            title="Open POS to Create Order"
+          >
+            <i className="bi bi-cart-plus-fill"></i>
+            <span>Place Order (POS)</span>
+          </Link>
+        )}
+
         {/* Switch View Button for Admins */}
         {user?.role !== 'customer' && (
           location.pathname.startsWith('/customer') ? (
             <Link
               to="/admin/dashboard"
-              className="btn btn-primary btn-sm"
+              className="btn btn-secondary btn-sm"
               style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', borderRadius: '16px', textDecoration: 'none' }}
               title="Return to Admin Dashboard"
             >
-              <i className="bi bi-shield-fill" style={{ color: '#fff' }}></i>
+              <i className="bi bi-shield-fill" style={{ color: 'var(--color-primary)' }}></i>
               <span>Admin View</span>
             </Link>
           ) : (

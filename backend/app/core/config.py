@@ -27,7 +27,7 @@ class Settings(BaseSettings):
 
     # Google Gemini AI
     GOOGLE_API_KEY: str = ""
-    GEMINI_MODEL: str = "gemini-3.5-flash"
+    GEMINI_MODEL: str = "gemini-3-flash-preview"
     EMBEDDING_MODEL: str = "text-embedding-004"
 
     # ChromaDB

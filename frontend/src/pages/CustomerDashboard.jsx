@@ -163,17 +163,29 @@ export default function CustomerDashboard({ activeTab: propActiveTab }) {
     );
   };
 
-  const cartTotal = cart.reduce((sum, item) => sum + (item.price || 0) * item.quantity, 0);
+  // Order Form State
+  const [orderNotes, setOrderNotes] = useState('');
+
+  const cartSubtotal = cart.reduce((sum, item) => sum + (item.price || 0) * item.quantity, 0);
+  const cartSubtotalAfterDiscount = Math.max(0, cartSubtotal - cartDiscount);
+  const cartTax = cartSubtotalAfterDiscount * 0.05;
+  const cartGrandTotal = cartSubtotalAfterDiscount + cartTax;
 
   // Submit Order via real backend API
   const handlePlaceOrder = async () => {
     if (cart.length === 0) {
-      toast.error('Your cart is empty!');
+      toast.error('Your cart is empty! Please add some delicious items first.');
       return;
     }
 
     setIsSubmittingOrder(true);
     try {
+      const formattedNotes = [
+        orderType ? `Type: ${orderType.toUpperCase()}` : '',
+        orderType === 'dine-in' && tableNumber ? `Table: ${tableNumber}` : '',
+        orderNotes ? `Special Request: ${orderNotes}` : '',
+      ].filter(Boolean).join(' | ');
+
       const orderPayload = {
         customer_id: dashboardData?.profile?.id || null,
         items: cart.map((c) => ({
@@ -183,20 +195,20 @@ export default function CustomerDashboard({ activeTab: propActiveTab }) {
           notes: '',
         })),
         discount_amount: cartDiscount,
-        total_amount: Math.max(0, cartTotal - cartDiscount),
-        customer_name: dashboardData?.profile?.name || user?.full_name || 'Customer',
+        notes: formattedNotes || null,
       };
 
       await ordersAPI.create(orderPayload);
-      toast.success('Order placed successfully! 🍕 Your order ticket is live in the kitchen.');
+      toast.success('🎉 Order placed successfully! Your ticket has been sent to the kitchen.');
       setCart([]);
       setCartDiscount(0);
+      setOrderNotes('');
       setShowCartDrawer(false);
-      await loadDashboardData(); // Refresh metrics from database
+      await loadDashboardData(); // Refresh metrics and order list from database
       setActiveTab('orders');
     } catch (err) {
       console.error('Order creation error:', err);
-      toast.error('Failed to place order. Please try again.');
+      toast.error(err.response?.data?.detail || 'Failed to place order. Please try again.');
     } finally {
       setIsSubmittingOrder(false);
     }
@@ -502,7 +514,30 @@ export default function CustomerDashboard({ activeTab: propActiveTab }) {
           onClick={() => setActiveTab('menu')}
           style={{ borderRadius: '20px' }}
         >
-          <i className="bi bi-journal-richtext" style={{ marginRight: '6px' }}></i> Explore Menu & Order
+          <i className="bi bi-journal-richtext" style={{ marginRight: '6px' }}></i> Explore Menu
+        </button>
+
+        <button
+          className={`btn ${activeTab === 'cart' ? 'btn-primary' : 'btn-ghost'}`}
+          onClick={() => setActiveTab('cart')}
+          style={{ borderRadius: '20px', position: 'relative' }}
+        >
+          <i className="bi bi-cart-fill" style={{ marginRight: '6px' }}></i> Place Order / Cart
+          {cart.length > 0 && (
+            <span
+              style={{
+                marginLeft: '8px',
+                background: 'var(--color-primary)',
+                color: 'white',
+                padding: '2px 8px',
+                borderRadius: '12px',
+                fontSize: '11px',
+                fontWeight: 800,
+              }}
+            >
+              {cart.reduce((s, i) => s + i.quantity, 0)}
+            </span>
+          )}
         </button>
 
         <button
@@ -589,8 +624,17 @@ export default function CustomerDashboard({ activeTab: propActiveTab }) {
 
               {favoriteItems.length > 0 ? (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '16px', padding: '16px', background: 'var(--bg-elevated)', borderRadius: 'var(--radius-sm)' }}>
-                  <div style={{ width: '64px', height: '64px', borderRadius: '12px', background: 'var(--gradient-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '28px', color: 'white', flexShrink: 0 }}>
-                    🍛
+                  <div style={{ width: '64px', height: '64px', borderRadius: '12px', overflow: 'hidden', background: 'var(--bg-base)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, border: '1px solid var(--border-subtle)' }}>
+                    {favoriteItems[0].image_url ? (
+                      <img 
+                        src={favoriteItems[0].image_url} 
+                        alt={favoriteItems[0].name} 
+                        style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
+                        onError={(e) => { e.currentTarget.style.display = 'none'; }} 
+                      />
+                    ) : (
+                      <span style={{ fontSize: '28px' }}>🍛</span>
+                    )}
                   </div>
                   <div style={{ flex: 1 }}>
                     <h4 style={{ margin: 0, fontSize: '16px', fontWeight: 700, color: 'var(--text-primary)' }}>
@@ -685,79 +729,509 @@ export default function CustomerDashboard({ activeTab: propActiveTab }) {
         </div>
       )}
 
-      {/* ─── TAB 2: EXPLORE MENU & ORDER (LIVE DATABASE DATA) ─────────────── */}
-      {activeTab === 'menu' && (
-        <div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '20px' }}>
-            {/* Category Filter Pills */}
-            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-              {['all', 'main_course', 'appetizer', 'snack', 'beverage', 'dessert', 'special'].map((cat) => (
-                <button
-                  key={cat}
-                  className={`btn btn-sm ${selectedCategory === cat ? 'btn-primary' : 'btn-secondary'}`}
-                  onClick={() => setSelectedCategory(cat)}
-                  style={{ borderRadius: '16px', textTransform: 'capitalize' }}
-                >
-                  {cat.replace('_', ' ')}
-                </button>
-              ))}
+      {/* ─── TAB 2: EXPLORE MENU & ORDER (CATEGORIZED SECTIONS) ─────────────── */}
+      {activeTab === 'menu' && (() => {
+        const CUSTOMER_CATEGORIES = [
+          { id: 'all', label: 'All Items', shortLabel: 'All', emoji: '🍽️' },
+          { id: 'appetizer', label: 'Appetizers & Starters', shortLabel: 'Appetizers', emoji: '🥗', color: '#10b981', desc: 'Crispy bites, tandoori starters & savory platters' },
+          { id: 'main_course', label: 'Main Course', shortLabel: 'Main Course', emoji: '🍛', color: '#f97316', desc: 'Rich curries, biryanis, dal, gravies & fresh breads' },
+          { id: 'dessert', label: 'Desserts & Sweets', shortLabel: 'Desserts', emoji: '🍰', color: '#ec4899', desc: 'Traditional Indian mithai, halwa & chilled sweets' },
+          { id: 'beverage', label: 'Beverages & Drinks', shortLabel: 'Beverages', emoji: '🥤', color: '#06b6d4', desc: 'Refreshing lassis, cooling drinks, teas & coffees' },
+          { id: 'snack', label: 'Snacks & Street Food', shortLabel: 'Snacks', emoji: '🥟', color: '#eab308', desc: 'Authentic chaats, crispy snacks & street favorites' },
+        ];
+
+        const activeCategoryList = selectedCategory === 'all'
+          ? CUSTOMER_CATEGORIES.filter(c => c.id !== 'all')
+          : CUSTOMER_CATEGORIES.filter(c => c.id === selectedCategory);
+
+        return (
+          <div>
+            {/* Filter and Search Bar */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '24px', background: 'var(--bg-elevated)', padding: '14px 18px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-default)' }}>
+              {/* Category Filter Pills */}
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+                {CUSTOMER_CATEGORIES.map((cat) => {
+                  const count = cat.id === 'all'
+                    ? menuItems.length
+                    : menuItems.filter(m => (m.category || '').toLowerCase().includes(cat.id)).length;
+
+                  return (
+                    <button
+                      key={cat.id}
+                      className={`btn btn-sm ${selectedCategory === cat.id ? 'btn-primary' : 'btn-ghost'}`}
+                      onClick={() => setSelectedCategory(cat.id)}
+                      style={{ borderRadius: '20px', display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 14px', fontWeight: selectedCategory === cat.id ? 700 : 500 }}
+                    >
+                      <span>{cat.emoji}</span>
+                      <span>{cat.shortLabel}</span>
+                      <span style={{ 
+                        fontSize: '11px', 
+                        opacity: 0.85, 
+                        background: selectedCategory === cat.id ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.08)',
+                        padding: '1px 6px',
+                        borderRadius: '10px'
+                      }}>
+                        {count}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Search Bar */}
+              <div className="navbar-search" style={{ minWidth: '240px', margin: 0 }}>
+                <i className="bi bi-search" style={{ color: 'var(--text-muted)' }}></i>
+                <input
+                  type="text"
+                  placeholder="Search dishes by name or description..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
+                {searchQuery && (
+                  <button onClick={() => setSearchQuery('')} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>
+                    <i className="bi bi-x-circle-fill"></i>
+                  </button>
+                )}
+              </div>
             </div>
 
-            {/* Search Bar */}
-            <div className="navbar-search" style={{ minWidth: '240px' }}>
-              <i className="bi bi-search" style={{ color: 'var(--text-muted)' }}></i>
-              <input
-                type="text"
-                placeholder="Search menu items in ₹..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
-              {searchQuery && (
-                <button onClick={() => setSearchQuery('')} style={{ background: 'none', border: 'none', color: 'var(--text-muted)' }}>
-                  <i className="bi bi-x-circle-fill"></i>
+            {loadingMenu ? (
+              <LoadingSpinner message="Fetching dishes from menu database..." />
+            ) : filteredMenu.length === 0 ? (
+              <div className="card" style={{ textAlign: 'center', padding: '60px 20px', borderRadius: 'var(--radius-md)' }}>
+                <i className="bi bi-journal-x" style={{ fontSize: '48px', color: 'var(--text-muted)' }}></i>
+                <h3 style={{ marginTop: '16px' }}>No dishes match your filter</h3>
+                <p style={{ color: 'var(--text-secondary)' }}>Try clearing your search or choosing a different category.</p>
+                <button className="btn btn-secondary btn-sm" onClick={() => { setSearchQuery(''); setSelectedCategory('all'); }} style={{ marginTop: '12px' }}>
+                  Show Full Menu
+                </button>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
+                {activeCategoryList.map((cat) => {
+                  const sectionDishes = filteredMenu.filter(dish => 
+                    (dish.category || '').toLowerCase().includes(cat.id)
+                  );
+
+                  if (sectionDishes.length === 0 && searchQuery) return null;
+
+                  return (
+                    <section key={cat.id} className="customer-menu-section">
+                      
+                      {/* Category Header Banner */}
+                      <div style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        flexWrap: 'wrap',
+                        gap: '12px',
+                        padding: '12px 18px',
+                        marginBottom: '16px',
+                        background: 'var(--bg-elevated)',
+                        borderLeft: `5px solid ${cat.color}`,
+                        borderRadius: 'var(--radius-md)',
+                        boxShadow: 'var(--shadow-sm)'
+                      }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                          <span style={{ fontSize: '22px' }}>{cat.emoji}</span>
+                          <div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <h3 style={{ fontSize: '18px', fontWeight: 800, margin: 0, color: 'var(--text-primary)' }}>
+                                {cat.label}
+                              </h3>
+                              <span className="badge" style={{ 
+                                background: `${cat.color}22`, 
+                                color: cat.color, 
+                                border: `1px solid ${cat.color}44`,
+                                fontWeight: 700,
+                                fontSize: '11px',
+                                padding: '2px 8px'
+                              }}>
+                                {sectionDishes.length} {sectionDishes.length === 1 ? 'Dish' : 'Dishes'}
+                              </span>
+                            </div>
+                            <p style={{ margin: '2px 0 0 0', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                              {cat.desc}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Dishes Grid */}
+                      {sectionDishes.length === 0 ? (
+                        <div className="card" style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                          <p style={{ margin: 0, fontSize: '13px' }}>No items in {cat.label} at this moment.</p>
+                        </div>
+                      ) : (
+                        <div className="grid-3" style={{ gap: '20px' }}>
+                          {sectionDishes.map((dish) => (
+                            <div key={dish.id} className="card" style={{ padding: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', transition: 'transform 0.2s ease, box-shadow 0.2s ease', border: '1px solid var(--border-default)', borderRadius: 'var(--radius-md)' }}>
+                              <div style={{
+                                height: '170px',
+                                position: 'relative',
+                                overflow: 'hidden',
+                                background: 'var(--bg-elevated)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center'
+                              }}>
+                                {dish.image_url ? (
+                                  <img
+                                    src={dish.image_url}
+                                    alt={dish.name}
+                                    style={{ width: '100%', height: '100%', objectFit: 'cover', transition: 'transform 0.3s ease' }}
+                                    onMouseEnter={(e) => e.currentTarget.style.transform = 'scale(1.06)'}
+                                    onMouseLeave={(e) => e.currentTarget.style.transform = 'scale(1.0)'}
+                                    onError={(e) => {
+                                      e.currentTarget.style.display = 'none';
+                                      if (e.currentTarget.nextElementSibling) e.currentTarget.nextElementSibling.style.display = 'flex';
+                                    }}
+                                  />
+                                ) : null}
+                                <div style={{
+                                  display: dish.image_url ? 'none' : 'flex',
+                                  flexDirection: 'column',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  gap: '6px',
+                                  color: 'var(--text-muted)'
+                                }}>
+                                  <span style={{ fontSize: '32px' }}>{cat.emoji}</span>
+                                  <span style={{ fontSize: '11px', fontWeight: 600 }}>{dish.name}</span>
+                                </div>
+
+                                <div style={{
+                                  position: 'absolute',
+                                  top: '10px',
+                                  right: '10px',
+                                  display: 'flex',
+                                  gap: '6px',
+                                  zIndex: 2
+                                }}>
+                                  {dish.is_vegetarian && (
+                                    <span className="badge" style={{ boxShadow: '0 2px 8px rgba(0,0,0,0.3)', backdropFilter: 'blur(6px)', background: 'rgba(16, 185, 129, 0.95)', color: '#fff', fontWeight: 700, fontSize: '11px', padding: '3px 8px' }}>
+                                      🌱 Veg
+                                    </span>
+                                  )}
+                                  {dish.rating > 0 && (
+                                    <span className="badge badge-warning" style={{ boxShadow: '0 2px 8px rgba(0,0,0,0.3)', backdropFilter: 'blur(6px)', background: 'rgba(245, 158, 11, 0.95)', color: '#fff', fontWeight: 700, fontSize: '11px', padding: '3px 8px' }}>
+                                      ⭐ {dish.rating}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+
+                              <div style={{ padding: '16px', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                                <div>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px', gap: '8px' }}>
+                                    <h4 style={{ fontSize: '16px', fontWeight: 700, color: 'var(--text-primary)', margin: 0, lineHeight: 1.3 }}>
+                                      {dish.name}
+                                    </h4>
+                                    <span style={{ fontSize: '18px', fontWeight: 800, color: 'var(--color-primary)', whiteSpace: 'nowrap' }}>
+                                      ₹{Number(dish.price).toFixed(2)}
+                                    </span>
+                                  </div>
+
+                                  <p style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: 1.4, marginBottom: '14px', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                                    {dish.description || 'Authentic dish prepared with signature spices and fresh ingredients.'}
+                                  </p>
+
+                                  <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '14px' }}>
+                                    <span style={{ fontSize: '11px', fontWeight: 700, color: cat.color, background: `${cat.color}15`, padding: '2px 8px', borderRadius: '4px' }}>
+                                      {cat.shortLabel}
+                                    </span>
+                                  </div>
+                                </div>
+
+                                <button className="btn btn-primary btn-block" onClick={() => addToCart(dish)} style={{ marginTop: 'auto', fontWeight: 700, padding: '10px' }}>
+                                  <i className="bi bi-plus-circle-fill" style={{ marginRight: '6px' }}></i> Add to Order
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </section>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
+      {/* ─── TAB 2.5: PLACE ORDER / CART ────────────────────────────────── */}
+      {activeTab === 'cart' && (
+        <div className="fade-in">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
+            <div>
+              <h2 style={{ fontSize: '22px', fontWeight: 800, margin: 0, color: 'var(--text-primary)' }}>
+                Place Order & Review Cart 🛒
+              </h2>
+              <p style={{ margin: '4px 0 0 0', fontSize: '13px', color: 'var(--text-secondary)' }}>
+                Confirm your delicious choices, select dining preferences, and submit your live kitchen ticket.
+              </p>
+            </div>
+
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button className="btn btn-secondary btn-sm" onClick={() => setActiveTab('menu')}>
+                <i className="bi bi-plus-circle" style={{ marginRight: '6px' }}></i> Add More Dishes
+              </button>
+              {cart.length > 0 && (
+                <button
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => {
+                    setCart([]);
+                    setCartDiscount(0);
+                    toast.success('Cart cleared');
+                  }}
+                  style={{ color: 'var(--color-danger)' }}
+                >
+                  <i className="bi bi-trash" style={{ marginRight: '6px' }}></i> Clear Cart
                 </button>
               )}
             </div>
           </div>
 
-          {loadingMenu ? (
-            <LoadingSpinner message="Fetching dishes from menu database..." />
+          {cart.length === 0 ? (
+            <div
+              className="card"
+              style={{
+                textAlign: 'center',
+                padding: '60px 20px',
+                background: 'rgba(255, 255, 255, 0.03)',
+                border: '2px dashed var(--border-default)',
+                borderRadius: 'var(--radius-md)',
+              }}
+            >
+              <div style={{ width: '80px', height: '80px', borderRadius: '50%', background: 'rgba(249, 115, 22, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px auto', color: 'var(--color-primary)', fontSize: '36px' }}>
+                <i className="bi bi-cart-x"></i>
+              </div>
+              <h3 style={{ fontSize: '20px', fontWeight: 700, margin: '0 0 8px 0' }}>Your Cart is Empty</h3>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '14px', maxWidth: '440px', margin: '0 auto 20px auto' }}>
+                You have not added any dishes to your order yet. Browse our menu and discover freshly prepared appetizers, main courses, and beverages!
+              </p>
+              <button className="btn btn-primary btn-lg" onClick={() => setActiveTab('menu')}>
+                <i className="bi bi-journal-richtext" style={{ marginRight: '8px' }}></i> Browse Menu & Order
+              </button>
+            </div>
           ) : (
-            <div className="grid-3" style={{ gap: '20px' }}>
-              {filteredMenu.map((dish) => (
-                <div key={dish.id} className="card" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-                  <div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
-                      <h3 style={{ fontSize: '16px', fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
-                        {dish.name}
-                      </h3>
-                      <span style={{ fontSize: '16px', fontWeight: 800, color: 'var(--color-primary)' }}>
-                        ₹{Number(dish.price).toFixed(2)}
-                      </span>
-                    </div>
-
-                    <p style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: 1.5, marginBottom: '12px' }}>
-                      {dish.description || 'Authentic dish prepared with signature spices and fresh ingredients.'}
-                    </p>
-
-                    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '16px' }}>
-                      <span className="badge badge-secondary" style={{ fontSize: '10px', textTransform: 'capitalize' }}>
-                        {dish.category}
-                      </span>
-                      {dish.is_vegetarian && (
-                        <span className="badge badge-success" style={{ fontSize: '10px' }}>🌱 Veg</span>
-                      )}
-                      {dish.rating > 0 && (
-                        <span className="badge badge-warning" style={{ fontSize: '10px' }}>⭐ {dish.rating}</span>
-                      )}
-                    </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: '24px', alignItems: 'flex-start' }}>
+              
+              {/* Left Column: Cart Items List */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                <div className="card" style={{ padding: '20px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '12px' }}>
+                    <h3 style={{ fontSize: '16px', fontWeight: 700, margin: 0 }}>
+                      Selected Items ({cart.reduce((s, i) => s + i.quantity, 0)})
+                    </h3>
+                    <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
+                      Subtotal: <strong style={{ color: 'var(--color-primary)' }}>₹{cartSubtotal.toFixed(2)}</strong>
+                    </span>
                   </div>
 
-                  <button className="btn btn-primary btn-block" onClick={() => addToCart(dish)}>
-                    <i className="bi bi-plus-circle-fill" style={{ marginRight: '6px' }}></i> Add to Order
-                  </button>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    {cart.map((item) => (
+                      <div
+                        key={item.id}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          padding: '14px',
+                          borderRadius: 'var(--radius-sm)',
+                          background: 'var(--bg-elevated)',
+                          border: '1px solid var(--border-default)',
+                          gap: '12px',
+                        }}
+                      >
+                        {/* Food Image Thumbnail & Info */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1 }}>
+                          <div style={{ width: '48px', height: '48px', borderRadius: 'var(--radius-sm)', overflow: 'hidden', background: 'var(--bg-base)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, border: '1px solid var(--border-subtle)' }}>
+                            {item.image_url ? (
+                              <img src={item.image_url} alt={item.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+                            ) : (
+                              <i className="bi bi-egg-fried" style={{ fontSize: '20px', color: 'var(--text-muted)' }}></i>
+                            )}
+                          </div>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                              <span style={{ fontWeight: 700, fontSize: '15px', color: 'var(--text-primary)' }}>
+                                {item.name}
+                              </span>
+                              {item.is_vegetarian && (
+                                <span className="badge badge-success" style={{ fontSize: '9px', padding: '1px 6px' }}>🌱 Veg</span>
+                              )}
+                            </div>
+                            <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+                              ₹{Number(item.price).toFixed(2)} each · <strong style={{ color: 'var(--color-primary)' }}>₹{(item.price * item.quantity).toFixed(2)}</strong>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Quantity Controls */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', background: 'var(--bg-base)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-subtle)', padding: '2px' }}>
+                            <button
+                              className="btn btn-ghost btn-sm"
+                              onClick={() => updateCartQuantity(item.id, -1)}
+                              style={{ width: '28px', height: '28px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                            >
+                              -
+                            </button>
+                            <span style={{ minWidth: '28px', textAlign: 'center', fontWeight: 800, fontSize: '14px' }}>
+                              {item.quantity}
+                            </span>
+                            <button
+                              className="btn btn-ghost btn-sm"
+                              onClick={() => updateCartQuantity(item.id, 1)}
+                              style={{ width: '28px', height: '28px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                            >
+                              +
+                            </button>
+                          </div>
+
+                          <button
+                            className="btn btn-ghost btn-sm"
+                            onClick={() => updateCartQuantity(item.id, -item.quantity)}
+                            style={{ color: 'var(--color-danger)', width: '28px', height: '28px', padding: 0 }}
+                            title="Remove item"
+                          >
+                            <i className="bi bi-trash"></i>
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div style={{ marginTop: '16px', paddingTop: '12px', borderTop: '1px dashed var(--border-subtle)' }}>
+                    <button className="btn btn-ghost btn-block btn-sm" onClick={() => setActiveTab('menu')} style={{ color: 'var(--color-primary)' }}>
+                      <i className="bi bi-plus-circle" style={{ marginRight: '6px' }}></i> Add another item from menu
+                    </button>
+                  </div>
                 </div>
-              ))}
+              </div>
+
+              {/* Right Column: Dining Options & Order Checkout */}
+              <div className="card" style={{ padding: '20px', background: 'var(--bg-card)', border: '1px solid rgba(249, 115, 22, 0.25)' }}>
+                <h3 style={{ fontSize: '17px', fontWeight: 800, margin: '0 0 16px 0', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '12px' }}>
+                  Dining Details & Checkout 🧾
+                </h3>
+
+                {/* Dining Type Selector */}
+                <div style={{ marginBottom: '16px' }}>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '8px' }}>
+                    Order Type
+                  </label>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px' }}>
+                    {[
+                      { id: 'dine-in', label: '🍽️ Dine-In' },
+                      { id: 'takeaway', label: '🥡 Takeaway' },
+                      { id: 'delivery', label: '🚗 Delivery' },
+                    ].map((type) => (
+                      <button
+                        key={type.id}
+                        type="button"
+                        className={`btn btn-sm ${orderType === type.id ? 'btn-primary' : 'btn-secondary'}`}
+                        onClick={() => setOrderType(type.id)}
+                        style={{ fontSize: '12px', padding: '8px 4px' }}
+                      >
+                        {type.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Table or Address input */}
+                {orderType === 'dine-in' ? (
+                  <div style={{ marginBottom: '16px' }}>
+                    <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
+                      Table / Seating Area
+                    </label>
+                    <input
+                      type="text"
+                      className="form-input"
+                      value={tableNumber}
+                      onChange={(e) => setTableNumber(e.target.value)}
+                      placeholder="e.g. Table 4, Outdoor Patio, Booth 2"
+                    />
+                  </div>
+                ) : (
+                  <div style={{ marginBottom: '16px' }}>
+                    <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
+                      {orderType === 'delivery' ? 'Delivery Address / Apartment' : 'Pickup Customer Name & Phone'}
+                    </label>
+                    <input
+                      type="text"
+                      className="form-input"
+                      value={tableNumber}
+                      onChange={(e) => setTableNumber(e.target.value)}
+                      placeholder={orderType === 'delivery' ? 'Enter delivery address...' : 'Enter name for pickup...'}
+                    />
+                  </div>
+                )}
+
+                {/* Cooking / Special Requests */}
+                <div style={{ marginBottom: '20px' }}>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
+                    Special Requests / Kitchen Instructions (Optional)
+                  </label>
+                  <input
+                    type="text"
+                    className="form-input"
+                    value={orderNotes}
+                    onChange={(e) => setOrderNotes(e.target.value)}
+                    placeholder="e.g. Extra spicy, no onions, pack sambar separately"
+                  />
+                </div>
+
+                {/* Price Breakdown */}
+                <div style={{ background: 'var(--bg-elevated)', padding: '16px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-default)', marginBottom: '20px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '8px' }}>
+                    <span>Items Subtotal:</span>
+                    <span>₹{cartSubtotal.toFixed(2)}</span>
+                  </div>
+
+                  {cartDiscount > 0 && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: 'var(--color-success)', fontWeight: 600, marginBottom: '8px' }}>
+                      <span>Combo Savings (30% Off):</span>
+                      <span>-₹{cartDiscount.toFixed(2)}</span>
+                    </div>
+                  )}
+
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '12px' }}>
+                    <span>GST (5%):</span>
+                    <span>₹{cartTax.toFixed(2)}</span>
+                  </div>
+
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '18px', fontWeight: 800, color: 'var(--text-primary)', borderTop: '1px solid var(--border-default)', paddingTop: '10px' }}>
+                    <span>Total Amount:</span>
+                    <span style={{ color: 'var(--color-primary)' }}>₹{cartGrandTotal.toFixed(2)}</span>
+                  </div>
+                </div>
+
+                {/* Place Order CTA */}
+                <button
+                  className="btn btn-primary btn-block btn-lg"
+                  onClick={handlePlaceOrder}
+                  disabled={isSubmittingOrder || cart.length === 0}
+                  style={{ height: '52px', fontSize: '16px', fontWeight: 800, boxShadow: '0 4px 14px rgba(249, 115, 22, 0.4)' }}
+                >
+                  {isSubmittingOrder ? (
+                    <>
+                      <span className="btn-spinner"></span> Sending Ticket to Kitchen...
+                    </>
+                  ) : (
+                    <>
+                      <i className="bi bi-check-circle-fill" style={{ marginRight: '8px' }}></i> Confirm & Place Order (₹{cartGrandTotal.toFixed(2)})
+                    </>
+                  )}
+                </button>
+
+                <div style={{ textAlign: 'center', marginTop: '12px', fontSize: '11px', color: 'var(--text-muted)' }}>
+                  ⚡ Instant Kitchen Transmission · Live Order Status Updates
+                </div>
+              </div>
             </div>
           )}
         </div>
@@ -859,25 +1333,63 @@ export default function CustomerDashboard({ activeTab: propActiveTab }) {
           ) : (
             <div className="grid-3" style={{ gap: '20px' }}>
               {favoriteItems.map((dish) => (
-                <div key={dish.id} className="card" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-                  <div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
-                      <h3 style={{ fontSize: '16px', fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
-                        {dish.name}
-                      </h3>
-                      <span style={{ fontSize: '16px', fontWeight: 800, color: 'var(--color-primary)' }}>
-                        ₹{dish.price}
-                      </span>
+                <div key={dish.id} className="card" style={{ padding: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', transition: 'transform 0.2s ease, box-shadow 0.2s ease' }}>
+                  <div style={{
+                    height: '140px',
+                    position: 'relative',
+                    overflow: 'hidden',
+                    background: 'var(--bg-elevated)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center'
+                  }}>
+                    {dish.image_url ? (
+                      <img
+                        src={dish.image_url}
+                        alt={dish.name}
+                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                        onError={(e) => {
+                          e.currentTarget.style.display = 'none';
+                          if (e.currentTarget.nextElementSibling) e.currentTarget.nextElementSibling.style.display = 'flex';
+                        }}
+                      />
+                    ) : null}
+                    <div style={{
+                      display: dish.image_url ? 'none' : 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '4px',
+                      color: 'var(--text-muted)'
+                    }}>
+                      <i className="bi bi-image" style={{ fontSize: '28px' }}></i>
                     </div>
 
-                    <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '12px' }}>
-                      Total Ordered: <strong style={{ color: 'var(--color-primary)' }}>{dish.total_qty_ordered} times</strong>
-                    </p>
+                    <span className="badge badge-primary" style={{ position: 'absolute', top: '10px', right: '10px', background: 'var(--gradient-primary)', color: '#fff', fontSize: '11px', fontWeight: 700 }}>
+                      ❤️ Favorite
+                    </span>
                   </div>
 
-                  <button className="btn btn-primary btn-block" onClick={() => addToCart(dish)}>
-                    <i className="bi bi-plus-circle-fill" style={{ marginRight: '6px' }}></i> Reorder Dish
-                  </button>
+                  <div style={{ padding: '16px', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                    <div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
+                        <h3 style={{ fontSize: '16px', fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
+                          {dish.name}
+                        </h3>
+                        <span style={{ fontSize: '17px', fontWeight: 800, color: 'var(--color-primary)' }}>
+                          ₹{dish.price}
+                        </span>
+                      </div>
+
+                      <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '12px' }}>
+                        Total Ordered: <strong style={{ color: 'var(--color-primary)' }}>{dish.total_qty_ordered} times</strong>
+                      </p>
+                    </div>
+
+                    <button className="btn btn-primary btn-block" onClick={() => addToCart(dish)}>
+                      <i className="bi bi-plus-circle-fill" style={{ marginRight: '6px' }}></i> Reorder Dish
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -1035,61 +1547,161 @@ export default function CustomerDashboard({ activeTab: propActiveTab }) {
         </div>
       )}
 
+      {/* ─── FLOATING BOTTOM CART BAR (ACTIVE ON OTHER TABS) ───────────── */}
+      {cart.length > 0 && activeTab !== 'cart' && (
+        <div
+          style={{
+            position: 'fixed',
+            bottom: '24px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            background: 'var(--bg-elevated)',
+            border: '2px solid var(--color-primary)',
+            borderRadius: '50px',
+            padding: '12px 24px',
+            boxShadow: '0 8px 32px rgba(249, 115, 22, 0.35)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '20px',
+            zIndex: 900,
+            backdropFilter: 'blur(12px)',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: 'var(--color-primary)', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: '16px' }}>
+              {cart.reduce((s, i) => s + i.quantity, 0)}
+            </div>
+            <div>
+              <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Current Order Total</div>
+              <div style={{ fontSize: '17px', fontWeight: 800, color: 'var(--text-primary)' }}>
+                ₹{cartGrandTotal.toFixed(2)}
+              </div>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', gap: '10px' }}>
+            <button
+              className="btn btn-primary"
+              onClick={() => setActiveTab('cart')}
+              style={{ borderRadius: '24px', padding: '8px 20px', fontWeight: 700 }}
+            >
+              <i className="bi bi-cart-check-fill" style={{ marginRight: '6px' }}></i> Review & Place Order →
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* ─── CART SLIDE-OVER DRAWER ─────────────────────────────────────── */}
       {showCartDrawer && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)', zIndex: 1000, display: 'flex', justifyContent: 'flex-end' }}>
-          <div style={{ width: '100%', maxWidth: '420px', height: '100%', background: 'var(--bg-card)', display: 'flex', flexDirection: 'column', padding: '24px', boxShadow: 'var(--shadow-lg)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-              <h2 style={{ fontSize: '18px', fontWeight: 800, margin: 0 }}>Your Order Cart 🛒</h2>
+          <div style={{ width: '100%', maxWidth: '440px', height: '100%', background: 'var(--bg-card)', display: 'flex', flexDirection: 'column', padding: '24px', boxShadow: 'var(--shadow-lg)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <div>
+                <h2 style={{ fontSize: '18px', fontWeight: 800, margin: 0 }}>Your Order Cart 🛒</h2>
+                <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: '2px 0 0 0' }}>{cart.reduce((s, i) => s + i.quantity, 0)} items selected</p>
+              </div>
               <button className="btn btn-ghost btn-sm" onClick={() => setShowCartDrawer(false)}>
                 <i className="bi bi-x-lg"></i>
               </button>
             </div>
 
-            {/* Order type and table number inputs removed completely */}
-
-            <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '12px', paddingRight: '4px' }}>
               {cart.length === 0 ? (
                 <div style={{ textAlign: 'center', margin: 'auto', color: 'var(--text-muted)' }}>
-                  <i className="bi bi-cart-x" style={{ fontSize: '36px' }}></i>
-                  <p style={{ marginTop: '8px' }}>Your cart is empty</p>
+                  <i className="bi bi-cart-x" style={{ fontSize: '48px', color: 'var(--text-muted)' }}></i>
+                  <p style={{ marginTop: '12px', fontWeight: 600 }}>Your cart is empty</p>
+                  <button className="btn btn-secondary btn-sm" onClick={() => { setShowCartDrawer(false); setActiveTab('menu'); }}>
+                    Browse Menu
+                  </button>
                 </div>
               ) : (
-                cart.map((item) => (
-                  <div key={item.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px', borderRadius: 'var(--radius-sm)', background: 'var(--bg-elevated)' }}>
-                    <div>
-                      <div style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '14px' }}>{item.name}</div>
-                      <div style={{ fontSize: '12px', color: 'var(--color-primary)', fontWeight: 700 }}>
-                        ₹{Number(item.price).toFixed(2)}
+                <>
+                  {cart.map((item) => (
+                    <div key={item.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 12px', borderRadius: 'var(--radius-sm)', background: 'var(--bg-elevated)', border: '1px solid var(--border-default)', gap: '10px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1 }}>
+                        <div style={{ width: '40px', height: '40px', borderRadius: 'var(--radius-sm)', overflow: 'hidden', background: 'var(--bg-base)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, border: '1px solid var(--border-subtle)' }}>
+                          {item.image_url ? (
+                            <img src={item.image_url} alt={item.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+                          ) : (
+                            <i className="bi bi-egg-fried" style={{ fontSize: '18px', color: 'var(--text-muted)' }}></i>
+                          )}
+                        </div>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '13px' }}>{item.name}</div>
+                          <div style={{ fontSize: '12px', color: 'var(--color-primary)', fontWeight: 700 }}>
+                            ₹{Number(item.price).toFixed(2)} x {item.quantity} = ₹{(item.price * item.quantity).toFixed(2)}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <button className="btn btn-secondary btn-sm" onClick={() => updateCartQuantity(item.id, -1)} style={{ padding: '2px 8px' }}>-</button>
+                        <span style={{ fontWeight: 700, fontSize: '14px', minWidth: '20px', textAlign: 'center' }}>{item.quantity}</span>
+                        <button className="btn btn-secondary btn-sm" onClick={() => updateCartQuantity(item.id, 1)} style={{ padding: '2px 8px' }}>+</button>
+                        <button className="btn btn-ghost btn-sm" onClick={() => updateCartQuantity(item.id, -item.quantity)} style={{ color: 'var(--color-danger)', padding: '2px 6px' }}>
+                          <i className="bi bi-trash"></i>
+                        </button>
                       </div>
                     </div>
+                  ))}
 
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <button className="btn btn-secondary btn-sm" onClick={() => updateCartQuantity(item.id, -1)} style={{ padding: '2px 8px' }}>-</button>
-                      <span style={{ fontWeight: 700, fontSize: '14px' }}>{item.quantity}</span>
-                      <button className="btn btn-secondary btn-sm" onClick={() => updateCartQuantity(item.id, 1)} style={{ padding: '2px 8px' }}>+</button>
+                  {/* Order Options */}
+                  <div style={{ marginTop: '12px', padding: '12px', background: 'var(--bg-base)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-subtle)' }}>
+                    <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '6px' }}>Order Type & Table</label>
+                    <div style={{ display: 'flex', gap: '6px', marginBottom: '8px' }}>
+                      {['dine-in', 'takeaway', 'delivery'].map(t => (
+                        <button key={t} type="button" className={`btn btn-sm ${orderType === t ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setOrderType(t)} style={{ fontSize: '11px', padding: '4px 8px', flex: 1, textTransform: 'capitalize' }}>
+                          {t}
+                        </button>
+                      ))}
                     </div>
+                    <input
+                      type="text"
+                      className="form-input"
+                      style={{ fontSize: '12px', padding: '6px 10px', marginBottom: '8px' }}
+                      value={tableNumber}
+                      onChange={(e) => setTableNumber(e.target.value)}
+                      placeholder={orderType === 'dine-in' ? 'Table Number (e.g. Table 4)' : 'Delivery Address / Pickup Name'}
+                    />
+                    <input
+                      type="text"
+                      className="form-input"
+                      style={{ fontSize: '12px', padding: '6px 10px' }}
+                      value={orderNotes}
+                      onChange={(e) => setOrderNotes(e.target.value)}
+                      placeholder="Special instructions / notes..."
+                    />
                   </div>
-                ))
+                </>
               )}
             </div>
 
             {cart.length > 0 && (
-              <div style={{ borderTop: '1px solid var(--border-default)', paddingTop: '16px', marginTop: '16px' }}>
+              <div style={{ borderTop: '1px solid var(--border-default)', paddingTop: '14px', marginTop: '14px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                  <span>Subtotal:</span>
+                  <span>₹{cartSubtotal.toFixed(2)}</span>
+                </div>
                 {cartDiscount > 0 && (
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', color: 'var(--color-success)', marginBottom: '8px' }}>
-                    <span>Promo Combo Discount:</span>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: 'var(--color-success)', marginBottom: '4px' }}>
+                    <span>Promo Discount:</span>
                     <span>-₹{cartDiscount.toFixed(2)}</span>
                   </div>
                 )}
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '18px', fontWeight: 800, marginBottom: '16px' }}>
-                  <span>Total Amount:</span>
-                  <span style={{ color: 'var(--color-primary)' }}>₹{Math.max(0, cartTotal - cartDiscount).toFixed(2)}</span>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '8px' }}>
+                  <span>GST (5%):</span>
+                  <span>₹{cartTax.toFixed(2)}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '17px', fontWeight: 800, marginBottom: '14px' }}>
+                  <span>Total:</span>
+                  <span style={{ color: 'var(--color-primary)' }}>₹{cartGrandTotal.toFixed(2)}</span>
                 </div>
 
-                <button className="btn btn-primary btn-block btn-lg" onClick={handlePlaceOrder} disabled={isSubmittingOrder}>
-                  {isSubmittingOrder ? 'Sending Order...' : 'Confirm & Place Order 🚀'}
-                </button>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button className="btn btn-primary btn-block btn-lg" onClick={handlePlaceOrder} disabled={isSubmittingOrder}>
+                    {isSubmittingOrder ? 'Sending to Kitchen...' : `Confirm & Place Order 🚀`}
+                  </button>
+                </div>
               </div>
             )}
           </div>

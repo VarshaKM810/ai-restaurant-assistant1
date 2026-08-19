@@ -64,12 +64,25 @@ class VectorDBManager:
             return
         try:
             import chromadb
-            # Try connecting to HTTP server first, fallback to PersistentClient
-            try:
-                self._client = chromadb.HttpClient(host=settings.CHROMA_HOST, port=settings.CHROMA_PORT)
-                self.collection = self._client.get_or_create_collection(name="restaurant_knowledge")
-                logger.info(f"Connected to ChromaDB HTTP Server at {settings.CHROMA_HOST}:{settings.CHROMA_PORT}")
-            except Exception:
+            import socket
+            use_http = False
+            if settings.CHROMA_HOST and settings.CHROMA_PORT:
+                try:
+                    sock = socket.create_connection((settings.CHROMA_HOST, settings.CHROMA_PORT), timeout=0.5)
+                    sock.close()
+                    use_http = True
+                except Exception:
+                    use_http = False
+
+            if use_http:
+                try:
+                    self._client = chromadb.HttpClient(host=settings.CHROMA_HOST, port=settings.CHROMA_PORT)
+                    self.collection = self._client.get_or_create_collection(name="restaurant_knowledge")
+                    logger.info(f"Connected to ChromaDB HTTP Server at {settings.CHROMA_HOST}:{settings.CHROMA_PORT}")
+                except Exception:
+                    use_http = False
+
+            if not use_http:
                 self._client = chromadb.PersistentClient(path=settings.CHROMA_PERSIST_DIR)
                 self.collection = self._client.get_or_create_collection(name="restaurant_knowledge")
                 logger.info(f"Using local ChromaDB PersistentClient at {settings.CHROMA_PERSIST_DIR}")

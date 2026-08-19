@@ -264,36 +264,68 @@ class AIService:
                 from google import genai
                 client = genai.Client(api_key=api_key)
 
-                prompt = (
-                    "You are the Intelligent Restaurant Operations Assistant for RestaurantAI. "
-                    "Answer the staff/manager question clearly and helpfully using the live data below. "
-                    "You MUST format your response exactly using these four Markdown headers:\n"
-                    "**Insight:** (Your main finding)\n"
-                    "**Reason:** (Why this is happening)\n"
-                    "**Evidence:** (Data points from the context. If data is missing or insufficient, state 'Insufficient evidence in the database.')\n"
-                    "**Recommendation:** (Actionable advice)\n\n"
-                    "CRITICAL: Do NOT invent or hallucinate statistics, numbers, or facts. Ground all findings in the provided context.\n\n"
-                    f"=== CHROMADB KNOWLEDGE BASE ===\n{chroma_context}\n\n"
-                    f"=== LIVE POSTGRESQL DATA ===\n"
-                    f"{waste_ctx}\n\n"
-                    f"{sales_ctx}\n\n"
-                    f"{reviews_ctx}\n\n"
-                    f"=== USER QUESTION ===\n{question}"
-                )
-
-                response = client.models.generate_content(
-                    model=settings.GEMINI_MODEL,
-                    contents=prompt
-                )
-                if response and response.text:
-                    answer = response.text
-                    model_used = settings.GEMINI_MODEL
-                    logger.info(f"Gemini response generated successfully for question: {question[:60]}")
+                user_role = getattr(request, "user_role", "admin") or "admin"
+                if user_role == "customer":
+                    prompt = (
+                        "You are the friendly, helpful Restaurant Concierge & Menu Assistant for RestaurantAI. "
+                        "Answer the customer's question warmly, attractively, and accurately using the restaurant menu and context below. "
+                        "Highlight delicious options, dietary preferences (vegetarian/non-vegetarian), and pairings where helpful.\n\n"
+                        f"=== RESTAURANT KNOWLEDGE & MENU BASE ===\n{chroma_context}\n\n"
+                        f"=== RESTAURANT DATA & SPECIALTIES ===\n"
+                        f"{sales_ctx}\n\n"
+                        f"{reviews_ctx}\n\n"
+                        f"=== CUSTOMER QUESTION ===\n{question}"
+                    )
                 else:
-                    raise Exception("Empty response from Gemini")
+                    prompt = (
+                        "You are the Intelligent Restaurant Operations Assistant for RestaurantAI. "
+                        "Answer the staff/manager question clearly and helpfully using the live data below. "
+                        "You MUST format your response exactly using these four Markdown headers:\n"
+                        "**Insight:** (Your main finding)\n"
+                        "**Reason:** (Why this is happening)\n"
+                        "**Evidence:** (Data points from the context. If data is missing or insufficient, state 'Insufficient evidence in the database.')\n"
+                        "**Recommendation:** (Actionable advice)\n\n"
+                        "CRITICAL: Do NOT invent or hallucinate statistics, numbers, or facts. Ground all findings in the provided context.\n\n"
+                        f"=== CHROMADB KNOWLEDGE BASE ===\n{chroma_context}\n\n"
+                        f"=== LIVE POSTGRESQL DATA ===\n"
+                        f"{waste_ctx}\n\n"
+                        f"{sales_ctx}\n\n"
+                        f"{reviews_ctx}\n\n"
+                        f"=== USER QUESTION ===\n{question}"
+                    )
+
+                # Try primary and fallback models
+                candidate_models = []
+                for m in [settings.GEMINI_MODEL, "gemini-3-flash-preview", "gemini-3.1-flash-lite"]:
+                    if m and m not in candidate_models:
+                        candidate_models.append(m)
+
+                gemini_success = False
+                last_gemini_error = None
+
+                for model_candidate in candidate_models:
+                    try:
+                        response = client.models.generate_content(
+                            model=model_candidate,
+                            contents=prompt
+                        )
+                        if response and response.text:
+                            answer = response.text
+                            model_used = model_candidate
+                            gemini_success = True
+                            logger.info(f"Gemini response generated successfully using {model_candidate} for question: {question[:60]}")
+                            break
+                    except Exception as model_err:
+                        last_gemini_error = model_err
+                        logger.warning(f"Gemini model {model_candidate} call failed: {model_err}. Trying next fallback...")
+
+                if not gemini_success:
+                    logger.warning(f"All Gemini models unavailable: {last_gemini_error}. Generating data-grounded fallback analysis.")
+                    model_used = "Data Analytics Engine (Offline Fallback)"
+                    answer = self._generate_fallback_analysis(question, sales_ctx, waste_ctx, reviews_ctx)
 
             except Exception as e:
-                logger.warning(f"Gemini API unavailable or rate-limited: {e}. Generating data-grounded fallback analysis.")
+                logger.warning(f"Gemini API initialization error: {e}. Generating data-grounded fallback analysis.")
                 model_used = "Data Analytics Engine (Offline Fallback)"
                 answer = self._generate_fallback_analysis(question, sales_ctx, waste_ctx, reviews_ctx)
 

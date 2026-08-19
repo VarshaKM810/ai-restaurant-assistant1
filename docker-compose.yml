@@ -43,6 +43,8 @@ services:
       - CHROMA_HOST=chromadb
       - CHROMA_PORT=8000
       - SECRET_KEY=your-super-secret-key-change-in-production-minimum-32-characters
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-your-google-gemini-api-key-here}
+      - GEMINI_MODEL=gemini-2.5-flash
     depends_on:
       db:
         condition: service_healthy

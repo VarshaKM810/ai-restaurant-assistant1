@@ -64,35 +64,51 @@ async def seed_database():
 
         print("[INFO] Seeding menu items (20+)...")
         menus = []
-        menu_items = [
-            ("Butter Chicken", FoodCategory.MAIN_COURSE, 380.0, 150.0),
-            ("Paneer Tikka", FoodCategory.APPETIZER, 290.0, 110.0),
-            ("Gulab Jamun", FoodCategory.DESSERT, 140.0, 40.0),
-            ("Garlic Naan", FoodCategory.MAIN_COURSE, 60.0, 15.0),
-            ("Chicken Biryani", FoodCategory.MAIN_COURSE, 420.0, 180.0),
-            ("Mutton Rogan Josh", FoodCategory.MAIN_COURSE, 550.0, 250.0),
-            ("Dal Makhani", FoodCategory.MAIN_COURSE, 250.0, 90.0),
-            ("Masala Dosa", FoodCategory.MAIN_COURSE, 180.0, 50.0),
-            ("Idli Sambar", FoodCategory.MAIN_COURSE, 120.0, 30.0),
-            ("Tandoori Chicken", FoodCategory.APPETIZER, 450.0, 200.0),
-            ("Samosa Chaat", FoodCategory.SNACK, 110.0, 35.0),
-            ("Pani Puri", FoodCategory.SNACK, 80.0, 20.0),
-            ("Mango Lassi", FoodCategory.BEVERAGE, 120.0, 40.0),
-            ("Masala Chai", FoodCategory.BEVERAGE, 50.0, 15.0),
-            ("Cold Coffee", FoodCategory.BEVERAGE, 150.0, 60.0),
-            ("Rasmalai", FoodCategory.DESSERT, 160.0, 55.0),
-            ("Gajar Ka Halwa", FoodCategory.DESSERT, 180.0, 70.0),
-            ("Palak Paneer", FoodCategory.MAIN_COURSE, 310.0, 120.0),
-            ("Fish Curry", FoodCategory.MAIN_COURSE, 480.0, 210.0),
-            ("Veg Pulao", FoodCategory.MAIN_COURSE, 220.0, 80.0),
-            ("Chole Bhature", FoodCategory.MAIN_COURSE, 240.0, 95.0),
-            ("Aloo Paratha", FoodCategory.MAIN_COURSE, 100.0, 35.0)
+
+        # Each tuple: (name, category, price, cost_price, is_vegetarian)
+        menu_items_data = [
+            ("Butter Chicken",    FoodCategory.MAIN_COURSE, 380.0,  150.0, False),
+            ("Paneer Tikka",      FoodCategory.APPETIZER,   290.0,  110.0, True),
+            ("Gulab Jamun",       FoodCategory.DESSERT,     140.0,   40.0, True),
+            ("Garlic Naan",       FoodCategory.MAIN_COURSE,  60.0,   15.0, True),
+            ("Chicken Biryani",   FoodCategory.MAIN_COURSE, 420.0,  180.0, False),
+            ("Mutton Rogan Josh", FoodCategory.MAIN_COURSE, 550.0,  250.0, False),
+            ("Dal Makhani",       FoodCategory.MAIN_COURSE, 250.0,   90.0, True),
+            ("Masala Dosa",       FoodCategory.MAIN_COURSE, 180.0,   50.0, True),
+            ("Idli Sambar",       FoodCategory.MAIN_COURSE, 120.0,   30.0, True),
+            ("Tandoori Chicken",  FoodCategory.APPETIZER,   450.0,  200.0, False),
+            ("Samosa Chaat",      FoodCategory.SNACK,       110.0,   35.0, True),
+            ("Pani Puri",         FoodCategory.SNACK,        80.0,   20.0, True),
+            ("Mango Lassi",       FoodCategory.BEVERAGE,    120.0,   40.0, True),
+            ("Masala Chai",       FoodCategory.BEVERAGE,     50.0,   15.0, True),
+            ("Cold Coffee",       FoodCategory.BEVERAGE,    150.0,   60.0, True),
+            ("Rasmalai",          FoodCategory.DESSERT,     160.0,   55.0, True),
+            ("Gajar Ka Halwa",    FoodCategory.DESSERT,     180.0,   70.0, True),
+            ("Palak Paneer",      FoodCategory.MAIN_COURSE, 310.0,  120.0, True),
+            ("Fish Curry",        FoodCategory.MAIN_COURSE, 480.0,  210.0, False),
+            ("Veg Pulao",         FoodCategory.MAIN_COURSE, 220.0,   80.0, True),
+            ("Chole Bhature",     FoodCategory.MAIN_COURSE, 240.0,   95.0, True),
+            ("Aloo Paratha",      FoodCategory.MAIN_COURSE, 100.0,   35.0, True),
         ]
-        for name, cat, price, cost in menu_items:
-            m = Menu(name=name, description=f"Delicious {name}", category=cat, price=price, cost_price=cost, total_orders=random.randint(50, 500), rating=random.uniform(4.0, 5.0))
+
+        for name, cat, price, cost, is_veg in menu_items_data:
+            slug = name.lower().replace(" ", "-")
+            img_url = f"/images/menu/{slug}.jpg"
+            m = Menu(
+                name=name,
+                description=f"Delicious {name}",
+                category=cat,
+                price=price,
+                cost_price=cost,
+                image_url=img_url,
+                is_vegetarian=is_veg,
+                total_orders=random.randint(50, 500),
+                rating=random.uniform(4.0, 5.0)
+            )
             session.add(m)
             menus.append(m)
         await session.flush()
+
 
         print("[INFO] Seeding customers (25+)...")
         customers = []

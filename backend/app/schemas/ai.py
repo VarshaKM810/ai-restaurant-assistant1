@@ -1,26 +1,41 @@
 """
 AI Knowledge Assistant Schemas.
 """
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 
 
 class ChatMessage(BaseModel):
-    role: str = Field(..., description="user or assistant")
-    content: str = Field(..., description="Message text")
+    role: str = Field(default="user", description="user or assistant")
+    content: str = Field(default="", description="Message text")
 
 
 class ChatRequest(BaseModel):
-    question: str = Field(..., min_length=1, max_length=2000, description="User query or prompt")
+    question: Optional[str] = Field(default=None, description="User query or prompt")
+    query: Optional[str] = Field(default=None, description="Alternative alias for question")
     history: Optional[List[ChatMessage]] = Field(default=[], description="Previous conversation messages")
+    conversation_id: Optional[str] = Field(default=None, description="Session or conversation ID")
+    user_role: Optional[str] = Field(default="admin", description="Role of the user (customer/admin/manager)")
+
+    @model_validator(mode="before")
+    @classmethod
+    def resolve_question(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if not data.get("question") and data.get("query"):
+                data["question"] = data["query"]
+            elif not data.get("query") and data.get("question"):
+                data["query"] = data["question"]
+            if not data.get("question"):
+                data["question"] = "Hello"
+        return data
 
 
 class ChatResponse(BaseModel):
     answer: str
     context_used: Optional[List[str]] = Field(default=[])
     sources: Optional[List[Dict[str, Any]]] = Field(default=[])
-    model_used: str = "gemini-2.5-flash"
+    model_used: str = "gemini-3.6-flash"
     response_time_ms: int = 0
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
